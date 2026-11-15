@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>overhead: drones spotted near you</title>
+<meta name="description" content="A crowdsourced, anonymous map of drone sightings. Tap when you see or hear one.">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+  :root { --bg:#0e1116; --panel:#171b22; --ink:#e8ebf0; --muted:#9aa3b2; --accent:#ffb020; --heard:#5ab0ff; --line:#2a303a; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  #map { position:absolute; inset:0; }
+  header { position:absolute; top:0; left:0; right:0; z-index:1000; padding:10px 14px calc(10px) 14px; padding-top:max(10px, env(safe-area-inset-top));
+           background:linear-gradient(var(--bg) 60%, transparent); display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; letter-spacing:.02em; }
+  h1 span { color:var(--muted); font-weight:400; font-size:14px; }
+  .windows { margin-left:auto; display:flex; gap:4px; }
+  .windows button { background:var(--panel); color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:4px 10px; font-size:13px; }
+  .windows button[aria-pressed=true] { color:var(--bg); background:var(--ink); }
+  .actions { position:absolute; z-index:1000; left:0; right:0; bottom:0; padding:12px 14px max(14px, env(safe-area-inset-bottom));
+             display:flex; gap:10px; background:linear-gradient(transparent, var(--bg) 40%); }
+  .actions button { flex:1; font-size:17px; font-weight:600; padding:16px 10px; border-radius:14px; border:0; color:#111; }
+  #see { background:var(--accent); } #hear { background:var(--heard); }
+  .actions .info { flex:0 0 52px; background:var(--panel); color:var(--ink); border:1px solid var(--line); }
+  #sheet { position:absolute; z-index:1100; left:0; right:0; bottom:0; background:var(--panel); border-top:1px solid var(--line);
+           border-radius:16px 16px 0 0; padding:16px 16px max(16px, env(safe-area-inset-bottom)); display:none; max-height:80vh; overflow:auto; }
+  #sheet.open { display:block; }
+  #sheet h2 { margin:0 0 6px; font-size:18px; }
+  #sheet p { margin:6px 0; color:var(--muted); }
+  #sheet .row { display:flex; gap:10px; margin-top:12px; }
+  #sheet .row button { flex:1; padding:14px; border-radius:12px; border:1px solid var(--line); background:var(--bg); color:var(--ink); font-size:16px; }
+  #sheet .row button.go { background:var(--ink); color:var(--bg); font-weight:600; border:0; }
+  #toast { position:absolute; z-index:1200; left:50%; transform:translateX(-50%); top:70px; background:var(--panel); border:1px solid var(--line);
+           padding:8px 14px; border-radius:10px; display:none; max-width:90vw; }
+  .leaflet-popup-content { font-size:14px; }
+  a { color:var(--heard); }
+  .legend { position:absolute; z-index:1000; right:10px; bottom:96px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px 10px; font-size:12px; color:var(--muted); }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+</style>
+</head>
+<body>
+<div id="map" role="application" aria-label="Map of drone reports"></div>
+<header>
+  <h1>overhead <span>drones spotted near you</span></h1>
+  <div class="windows" role="group" aria-label="Time window">
+    <button data-h="1">1 h</button><button data-h="6">6 h</button><button data-h="24">24 h</button><button data-h="72">3 d</button>
+  </div>
+</header>
+<div id="toast" role="status"></div>
+<div class="legend"><span class="dot" style="background:var(--accent)"></span>seen <span class="dot" style="background:var(--heard);margin-left:8px"></span>heard only<br>bigger = more people</div>
+<div class="actions">
+  <button id="see">I see a drone</button>
+  <button id="hear">I hear a drone</button>
+  <button class="info" id="infoBtn" aria-label="About">?</button>
+</div>
+<div id="sheet" role="dialog" aria-modal="true"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+const map = L.map("map", { zoomControl: false, attributionControl: true }).setView([39.5, -98.35], 4);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "© OpenStreetMap" }).addTo(map);
+const layer = L.layerGroup().addTo(map);
+const sheet = document.getElementById("sheet"), toast = document.getElementById("toast");
+let hours = 6, pin = null, device = "";
+try { device = localStorage.getItem("device") || ""; if (!device) { device = crypto.randomUUID().replace(/-/g, ""); localStorage.setItem("device", device); } } catch { device = crypto.randomUUID().replace(/-/g, ""); }
+try { hours = +localStorage.getItem("hours") || 6; } catch {}
+
+function say(msg, ms = 3500) { toast.textContent = msg; toast.style.display = "block"; clearTimeout(say.t); say.t = setTimeout(() => toast.style.display = "none", ms); }
+function ago(iso) { const m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; }
+
+async function load() {
+  document.querySelectorAll(".windows button").forEach(b => b.setAttribute("aria-pressed", +b.dataset.h === hours));
+  try {
+    const r = await fetch(`/api/reports?hours=${hours}`); const fc = await r.json();
+    layer.clearLayers();
+    for (const f of fc.features) {
+      const p = f.properties, [lon, lat] = f.geometry.coordinates;
+      const age = (Date.now() - Date.parse(p.last)) / 3600000 / hours;   // 0 fresh .. 1 old
+      L.circleMarker([lat, lon], {
+        radius: 7 + 5 * Math.sqrt(p.reporters - 1), weight: 1, color: "#000",
+        fillColor: p.seen ? "#ffb020" : "#5ab0ff", fillOpacity: Math.max(0.25, 0.9 - 0.65 * age),
+      }).bindPopup(`<b>${p.reporters} ${p.reporters === 1 ? "person" : "people"}</b> · ${p.reports} report${p.reports === 1 ? "" : "s"}<br>
+        last ${ago(p.last)}<br>seen ${p.seen} · heard ${p.heard}${p.listener ? ` · ${p.listener} from listening devices` : ""}
+        <br><small>Unverified. Area rounded to ~300 m.</small>`).addTo(layer);
+    }
+  } catch { say("Couldn't load reports; retrying."); }
+}
+
+function close() { sheet.classList.remove("open"); if (pin) { map.removeLayer(pin); pin = null; } }
+
+function report(kind) {
+  const label = kind === "seen" ? "seeing" : "hearing";
+  const ask = (lat, lon, how) => {
+    if (pin) map.removeLayer(pin);
+    pin = L.marker([lat, lon], { draggable: true }).addTo(map);
+    map.setView([lat, lon], Math.max(map.getZoom(), 15));
+    sheet.innerHTML = `<h2>Report ${label} a drone here?</h2>
+      <p>${how} Drag the pin if it's off. It's saved rounded to an area about 300 m across, with no account and no address.</p>
+      <div class="row"><button id="cancel">Cancel</button><button class="go" id="send">Send</button></div>`;
+    sheet.classList.add("open");
+    document.getElementById("cancel").onclick = close;
+    document.getElementById("send").onclick = async () => {
+      const ll = pin.getLatLng();
+      try {
+        const r = await fetch("/api/report", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lat: ll.lat, lon: ll.lng, kind, device }) });
+        const j = await r.json();
+        if (!r.ok) { say(j.error || "Couldn't send."); return; }
+        close(); say("Thanks. Your report is on the map."); load();
+      } catch { say("Couldn't send; check your connection."); }
+    };
+  };
+  if (!navigator.geolocation) return ask(map.getCenter().lat, map.getCenter().lng, "Your browser can't share location, so put the pin where you are.");
+  say("Finding where you are…");
+  navigator.geolocation.getCurrentPosition(
+    (p) => ask(p.coords.latitude, p.coords.longitude, "This is where your phone says you are."),
+    () => ask(map.getCenter().lat, map.getCenter().lng, "No location from your phone, so put the pin where you are."),
+    { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 });
+}
+
+function about() {
+  sheet.innerHTML = `<h2>About overhead</h2>
+    <p><b>What this is:</b> anyone can tap when they see or hear a drone. Dots are areas where people reported one; bigger dots mean more different people. Some reports come from listening devices running <a href="https://github.com/lizTheDeveloper/earshot">earshot</a>.</p>
+    <p><b>Unverified.</b> A dot means people reported something, not that it was a drone, or whose it was: police, hobbyists, delivery, or anyone else. Treat it as a lead, not a fact.</p>
+    <p><b>Stay safe and legal.</b> Don't shoot at, jam, laser or chase a drone: it's a federal crime in the US and can hurt people. If someone is in danger, call 911.</p>
+    <p><b>Privacy.</b> No accounts. Your spot is rounded to ~300 m before it's saved. Your IP address isn't stored. A hash of it and of a random number your phone makes, salted with a secret that changes daily and is then deleted, is kept only to count separate people and limit spam. Reports are deleted after 7 days.</p>
+    <p><b>Open data.</b> <a href="/api/reports.geojson?hours=72">Download the reports</a> (GeoJSON) to map, mirror or analyse them.</p>
+    <div class="row"><button class="go" id="ok">Close</button></div>`;
+  sheet.classList.add("open");
+  document.getElementById("ok").onclick = close;
+}
+
+document.getElementById("see").onclick = () => report("seen");
+document.getElementById("hear").onclick = () => report("heard");
+document.getElementById("infoBtn").onclick = about;
+document.querySelectorAll(".windows button").forEach(b => b.onclick = () => { hours = +b.dataset.h; try { localStorage.setItem("hours", hours); } catch {} load(); });
+if (navigator.geolocation) navigator.geolocation.getCurrentPosition((p) => map.setView([p.coords.latitude, p.coords.longitude], 12), () => {}, { timeout: 5000, maximumAge: 600000 });
+try { if (!localStorage.getItem("seenAbout")) { about(); localStorage.setItem("seenAbout", 1); } } catch { about(); }
+load(); setInterval(load, 30000);
+</script>
+</body>
+</html>
