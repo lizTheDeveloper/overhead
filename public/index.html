@@ -48,7 +48,7 @@
   </div>
 </header>
 <div id="toast" role="status"></div>
-<div class="legend"><span class="dot" style="background:var(--accent)"></span>seen <span class="dot" style="background:var(--heard);margin-left:8px"></span>heard only<br>bigger = more people</div>
+<div class="legend"><span class="dot" style="background:var(--accent)"></span>seen <span class="dot" style="background:var(--heard);margin-left:8px"></span>heard only<br>bigger = more people<br>dashed = one network only</div>
 <div class="actions">
   <button id="see">I see a drone</button>
   <button id="hear">I hear a drone</button>
@@ -62,7 +62,9 @@ const map = L.map("map", { zoomControl: false, attributionControl: true }).setVi
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "© OpenStreetMap" }).addTo(map);
 const layer = L.layerGroup().addTo(map);
 const sheet = document.getElementById("sheet"), toast = document.getElementById("toast");
-let hours = 6, pin = null, device = "";
+let hours = 6, pin = null, device = "", siteKey = null;
+const config = fetch("/api/config").then(r => r.json()).then(c => { siteKey = c.turnstileSiteKey; if (siteKey) {
+  const sc = document.createElement("script"); sc.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"; sc.async = true; document.head.appendChild(sc); } }).catch(() => {});
 try { device = localStorage.getItem("device") || ""; if (!device) { device = crypto.randomUUID().replace(/-/g, ""); localStorage.setItem("device", device); } } catch { device = crypto.randomUUID().replace(/-/g, ""); }
 try { hours = +localStorage.getItem("hours") || 6; } catch {}
 
@@ -78,11 +80,11 @@ async function load() {
       const p = f.properties, [lon, lat] = f.geometry.coordinates;
       const age = (Date.now() - Date.parse(p.last)) / 3600000 / hours;   // 0 fresh .. 1 old
       L.circleMarker([lat, lon], {
-        radius: 7 + 5 * Math.sqrt(p.reporters - 1), weight: 1, color: "#000",
+        radius: 7 + 5 * Math.sqrt(Math.max(0, p.reporters - 1)), weight: p.confirmed ? 1 : 2, color: p.confirmed ? "#000" : "#fff", dashArray: p.confirmed ? null : "3 3",
         fillColor: p.seen ? "#ffb020" : "#5ab0ff", fillOpacity: Math.max(0.25, 0.9 - 0.65 * age),
       }).bindPopup(`<b>${p.reporters} ${p.reporters === 1 ? "person" : "people"}</b> · ${p.reports} report${p.reports === 1 ? "" : "s"}<br>
         last ${ago(p.last)}<br>seen ${p.seen} · heard ${p.heard}${p.listener ? ` · ${p.listener} from listening devices` : ""}
-        <br><small>Unverified. Area rounded to ~300 m.</small>`).addTo(layer);
+        <br><small>${p.confirmed ? "Reported from more than one network." : "<b>Unconfirmed:</b> only one network has reported here so far."} Unverified. Area rounded to ~300 m.</small>`).addTo(layer);
     }
   } catch { say("Couldn't load reports; retrying."); }
 }
@@ -97,16 +99,26 @@ function report(kind) {
     map.setView([lat, lon], Math.max(map.getZoom(), 15));
     sheet.innerHTML = `<h2>Report ${label} a drone here?</h2>
       <p>${how} Drag the pin if it's off. It's saved rounded to an area about 300 m across, with no account and no address.</p>
+      <div id="human" style="margin-top:10px"></div>
       <div class="row"><button id="cancel">Cancel</button><button class="go" id="send">Send</button></div>`;
     sheet.classList.add("open");
+    let token = null;
+    const sendBtn = document.getElementById("send");
+    if (siteKey) {
+      sendBtn.disabled = true; sendBtn.style.opacity = .5;
+      const render = () => window.turnstile ? turnstile.render("#human", { sitekey: siteKey, theme: "dark",
+        callback: (t) => { token = t; sendBtn.disabled = false; sendBtn.style.opacity = 1; },
+        "expired-callback": () => { token = null; sendBtn.disabled = true; sendBtn.style.opacity = .5; } }) : setTimeout(render, 300);
+      render();
+    }
     document.getElementById("cancel").onclick = close;
     document.getElementById("send").onclick = async () => {
       const ll = pin.getLatLng();
       try {
-        const r = await fetch("/api/report", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lat: ll.lat, lon: ll.lng, kind, device }) });
+        const r = await fetch("/api/report", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lat: ll.lat, lon: ll.lng, kind, device, turnstile: token || undefined }) });
         const j = await r.json();
         if (!r.ok) { say(j.error || "Couldn't send."); return; }
-        close(); say("Thanks. Your report is on the map."); load();
+        close(); say(j.moved ? "Thanks. That was far from your last report, so your earlier one was replaced by this." : "Thanks. Your report is on the map."); load();
       } catch { say("Couldn't send; check your connection."); }
     };
   };
@@ -123,7 +135,7 @@ function about() {
     <p><b>What this is:</b> anyone can tap when they see or hear a drone. Dots are areas where people reported one; bigger dots mean more different people. Some reports come from listening devices running <a href="https://github.com/lizTheDeveloper/earshot">earshot</a>.</p>
     <p><b>Unverified.</b> A dot means people reported something, not that it was a drone, or whose it was: police, hobbyists, delivery, or anyone else. Treat it as a lead, not a fact.</p>
     <p><b>Stay safe and legal.</b> Don't shoot at, jam, laser or chase a drone: it's a federal crime in the US and can hurt people. If someone is in danger, call 911.</p>
-    <p><b>Privacy.</b> No accounts. Your spot is rounded to ~300 m before it's saved. Your IP address isn't stored. A hash of it and of a random number your phone makes, salted with a secret that changes daily and is then deleted, is kept only to count separate people and limit spam. Reports are deleted after 7 days.</p>
+    <p><b>Privacy.</b> No accounts. Your spot is rounded to ~300 m before it's saved. A bot check (Cloudflare Turnstile) keeps scripts out. Your IP address isn't stored. A hash of it and of a random number your phone makes, salted with a secret that changes daily and is then deleted, is kept only to count separate people and limit spam. Reports are deleted after 7 days.</p>
     <p><b>Open data.</b> <a href="/api/reports.geojson?hours=72">Download the reports</a> (GeoJSON) to map, mirror or analyse them.</p>
     <div class="row"><button class="go" id="ok">Close</button></div>`;
   sheet.classList.add("open");

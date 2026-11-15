@@ -23,7 +23,10 @@ Live: https://overhead.lizthedeveloper.workers.dev
 - **Someone determined can fake reports.** Limits: 6 reports per phone and 60 per network address every
   10 minutes, counted by when the server got them. One network address adds at most 3 "people" to a dot,
   however many phone ids it makes up, but someone with many addresses can still fake a crowd. Only this
-  site's own page can submit from a browser. Treat a dot as a lead.
+  site's own page can submit from a browser, behind a Cloudflare Turnstile bot check. A reporter can't be in two
+  places at once: a report impossibly far from their last one (over 300 km/h) replaces their reports from
+  the last hour, which also fixes a misplaced pin. Dots reported from only one network are drawn dashed and
+  marked unconfirmed. Treat a dot as a lead.
 - **Listening devices are only as good as earshot,** which hasn't been validated on many real drones yet.
 
 ## Run your own
@@ -36,6 +39,9 @@ npm test                                   # core logic tests (node ≥ 20)
 wrangler d1 create overhead                # put the id it prints in wrangler.toml
 wrangler d1 migrations apply overhead --remote
 wrangler deploy
+# bot check: make a Turnstile widget for your hostname in the Cloudflare dashboard, then
+wrangler secret put TURNSTILE_SITEKEY
+wrangler secret put TURNSTILE_SECRET
 ```
 
 ## Connect a listener

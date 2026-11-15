@@ -1,5 +1,5 @@
 // overhead: a crowdsourced map of drone sightings. Cloudflare Worker + D1; the map page is static.
-import { addrKey, aggregate, KEEP_DAYS, MAX_PER_10_MIN, MAX_PER_ADDR_10_MIN, parseReport, windowHours } from "./core.js";
+import { addrKey, aggregate, teleported, KEEP_DAYS, MAX_PER_10_MIN, MAX_PER_ADDR_10_MIN, parseReport, windowHours } from "./core.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 const OPEN = { "access-control-allow-origin": "*" }; // reading the open data from anywhere is fine; writing isn't
@@ -37,6 +37,22 @@ async function salt(db, day) {
   return (await db.prepare("SELECT salt FROM salts WHERE day = ?").bind(day).first("salt"));
 }
 
+/** Cloudflare Turnstile: is this a person in a browser? Off until TURNSTILE_SECRET is set. */
+async function humanCheck(env, token, ip) {
+  if (!env.TURNSTILE_SECRET) return true;
+  if (typeof token !== "string" || !token || token.length > 4096) return false;
+  const form = new FormData();
+  form.append("secret", env.TURNSTILE_SECRET);
+  form.append("response", token);
+  form.append("remoteip", ip);
+  try {
+    const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body: form });
+    return (await r.json()).success === true;
+  } catch {
+    return false;
+  }
+}
+
 async function postReport(req, env) {
   // only this site's own page (or a script with no browser Origin, like the relay) may write: another site
   // can't make its visitors' browsers file reports from their addresses
@@ -59,6 +75,8 @@ async function postReport(req, env) {
   }
   const day = new Date(now * 1000).toISOString().slice(0, 10);
   const ip = req.headers.get("cf-connecting-ip") || "unknown";
+  if (r.source === "person" && !(await humanCheck(env, body.turnstile, ip)))
+    return json({ error: "the bot check didn't pass; reload the page and try again" }, 403);
   const s = await salt(env.DB, day);
   const addr = await sha256(`${s}|${addrKey(ip)}`);
   const reporter = await sha256(`${s}|${ip}|${r.device}`);
@@ -67,9 +85,18 @@ async function postReport(req, env) {
     .bind(reporter, addr, now - 600).first();
   if ((counts?.mine || 0) >= MAX_PER_10_MIN || (counts?.all_ || 0) >= MAX_PER_ADDR_10_MIN)
     return json({ error: "too many reports from you just now; try again in a few minutes" }, 429);
+  const prev = await env.DB.prepare("SELECT lat, lon, t FROM reports WHERE reporter = ? AND received > ? ORDER BY received DESC LIMIT 1")
+    .bind(reporter, now - 86400).first();
+  // impossibly far from this reporter's last report: treat it as a correction (a misplaced pin), and drop their
+  // recent reports, so one reporter can never have reports in two places at once
+  let moved = false;
+  if (teleported(prev, r)) {
+    await env.DB.prepare("DELETE FROM reports WHERE reporter = ? AND received > ?").bind(reporter, now - 3600).run();
+    moved = true;
+  }
   await env.DB.prepare("INSERT INTO reports (t, received, cell, lat, lon, kind, source, reporter, addr, conf) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(r.t, now, r.cell, r.lat, r.lon, r.kind, r.source, reporter, addr, r.conf).run();
-  return json({ ok: true, stored: { lat: r.lat, lon: r.lon, time: new Date(r.t * 1000).toISOString(), kind: r.kind } }, 201);
+  return json({ ok: true, moved, stored: { lat: r.lat, lon: r.lon, time: new Date(r.t * 1000).toISOString(), kind: r.kind } }, 201);
 }
 
 async function getReports(req, env, ctx, url) {
@@ -93,6 +120,8 @@ export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (url.pathname === "/api/report" && req.method === "POST") return postReport(req, env);
+    if (url.pathname === "/api/config" && req.method === "GET")
+      return json({ turnstileSiteKey: env.TURNSTILE_SITEKEY || null }, 200, { "cache-control": "public, max-age=300" });
     if ((url.pathname === "/api/reports" || url.pathname === "/api/reports.geojson") && req.method === "GET") return getReports(req, env, ctx, url);
     return env.ASSETS.fetch(req);
   },

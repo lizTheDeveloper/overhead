@@ -7,6 +7,7 @@ export const MAX_PER_10_MIN = 6; // per reporter (one phone or listener)
 export const MAX_PER_ADDR_10_MIN = 60; // per network address: a crowd on one carrier shares an address
 export const MAX_PEOPLE_PER_ADDR = 3; // per dot: made-up phone ids from one network can't pose as a crowd
 export const KEEP_DAYS = 7;
+export const MAX_KMH = 300; // faster than this between two reports from one reporter: not where they say they are
 export const WINDOWS_H = [1, 6, 24, 72];
 
 /** Round a point to its grid cell. The exact point is never stored. */
@@ -45,6 +46,23 @@ export function parseReport(body, nowS) {
   return { ok: true, value: { ...cellOf(lat, lon), kind, source, conf, t, device } };
 }
 
+/** Great-circle distance between two points, km. */
+export function kmBetween(a, b) {
+  const R = 6371, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/** Would the reporter have had to move impossibly fast since their previous report? (a few km of slack for cell rounding) */
+export function teleported(prev, next) {
+  if (!prev) return false;
+  const km = kmBetween(prev, next) - 2;
+  if (km <= 0) return false;
+  const h = Math.max(next.t - prev.t, 60) / 3600;
+  return km / h > MAX_KMH;
+}
+
 /** The part of an address that identifies one subscriber: IPv4 as is, IPv6 by its /64 network. */
 export function addrKey(ip) {
   if (!ip.includes(":")) return ip;
@@ -80,7 +98,9 @@ export function aggregate(rows) {
       geometry: { type: "Point", coordinates: [c.lon, c.lat] },
       properties: {
         cell: c.cell, reports: c.reports,
-        reporters: [...c.reporters.values()].reduce((n, set) => n + Math.min(set.size, MAX_PEOPLE_PER_ADDR), 0), last: new Date(c.last * 1000).toISOString(),
+        reporters: [...c.reporters.values()].reduce((n, set) => n + Math.min(set.size, MAX_PEOPLE_PER_ADDR), 0),
+        confirmed: c.reporters.size >= 2, // reports from at least two different networks
+        last: new Date(c.last * 1000).toISOString(),
         seen: c.seen, heard: c.heard, listener: c.listener,
       },
     })),

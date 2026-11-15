@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addrKey, aggregate, cellOf, parseReport, windowHours, CELL_DEG } from "../src/core.js";
+import { addrKey, aggregate, cellOf, kmBetween, teleported, parseReport, windowHours, CELL_DEG } from "../src/core.js";
 
 const NOW = 1_800_000_000;
 
@@ -85,4 +85,35 @@ test("only listeners may give a time; a person's report is always 'now'", () => 
   const r = parseReport({ lat: 1, lon: 1, time: iso }, NOW);
   assert.equal(r.ok, true);
   assert.equal(r.value.t, NOW - (NOW % 60));
+});
+
+test("distance between cells is roughly right", () => {
+  const sf = cellOf(37.7749, -122.4194), la = cellOf(34.0522, -118.2437);
+  const d = kmBetween(sf, la);
+  assert.ok(d > 540 && d < 580, `${d}`);
+  assert.equal(kmBetween(sf, sf), 0);
+});
+
+test("a reporter can't be in two far-apart places minutes apart", () => {
+  const sf = cellOf(37.7749, -122.4194), oak = cellOf(37.8044, -122.2712), la = cellOf(34.0522, -118.2437);
+  assert.equal(teleported({ ...sf, t: NOW - 300 }, { ...oak, t: NOW }), false); // 13 km in 5 min: a car
+  assert.equal(teleported({ ...sf, t: NOW - 300 }, { ...la, t: NOW }), true);   // 560 km in 5 min
+  assert.equal(teleported({ ...sf, t: NOW - 6 * 3600 }, { ...la, t: NOW }), false); // a flight
+  assert.equal(teleported(null, { ...la, t: NOW }), false);
+});
+
+test("a dot reported by one person is marked unconfirmed; two networks confirm it", () => {
+  const a = cellOf(37.7, -122.4);
+  const one = aggregate([{ ...a, kind: "seen", source: "person", reporter: "x", addr: "n1", t: NOW }]);
+  assert.equal(one.features[0].properties.confirmed, false);
+  const two = aggregate([
+    { ...a, kind: "seen", source: "person", reporter: "x", addr: "n1", t: NOW },
+    { ...a, kind: "seen", source: "person", reporter: "y", addr: "n1", t: NOW },
+  ]);
+  assert.equal(two.features[0].properties.confirmed, false); // same network: could be one person
+  const three = aggregate([
+    { ...a, kind: "seen", source: "person", reporter: "x", addr: "n1", t: NOW },
+    { ...a, kind: "seen", source: "person", reporter: "y", addr: "n2", t: NOW },
+  ]);
+  assert.equal(three.features[0].properties.confirmed, true);
 });
