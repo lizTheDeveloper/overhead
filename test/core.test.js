@@ -128,10 +128,22 @@ test("confirming a dot needs reports from two different provider networks, and p
   assert.equal(aggregate([row("x", "a1", "n1"), row("y", "a2", "n2")]).features[0].properties.confirmed, true);
 });
 
-test("network groups are wider than addresses: IPv4 /24, IPv6 /48", () => {
-  assert.equal(netKey("203.0.113.7", 7922), netKey("203.0.113.200", 7922));
-  assert.notEqual(netKey("203.0.113.7", 7922), netKey("203.0.114.7", 7922));
-  assert.equal(netKey("2001:db8:1:2::1", 7922), netKey("2001:db8:1:ffff::1", 7922));
-  assert.notEqual(netKey("2001:db8:1::1", 7922), netKey("2001:db8:2::1", 7922));
+test("without a known provider, network groups are IPv4 /24 and IPv6 /48", () => {
+  assert.equal(netKey("203.0.113.7"), netKey("203.0.113.200"));
+  assert.notEqual(netKey("203.0.113.7"), netKey("203.0.114.7"));
+  assert.equal(netKey("2001:db8:1:2::1"), netKey("2001:db8:1:ffff::1"));
+  assert.notEqual(netKey("2001:db8:1::1"), netKey("2001:db8:2::1"));
+});
+
+test("with a known provider, the provider is the network: IPv4 and IPv6 from one provider are one network", () => {
+  assert.equal(netKey("203.0.113.7", 7922), netKey("2001:db8:1::1", 7922));
+  assert.equal(netKey("203.0.113.7", 7922), netKey("198.51.100.9", 7922));
   assert.notEqual(netKey("203.0.113.7", 7922), netKey("203.0.113.7", 21928));
+});
+
+test("old rows with an empty network fall back to their address, and confirming needs two reporters", () => {
+  const a = cellOf(37.7, -122.4);
+  const row = (reporter, addr, net) => ({ ...a, kind: "seen", source: "person", reporter, addr, net, t: NOW });
+  assert.equal(aggregate([row("x", "a1", ""), row("y", "a2", "")]).features[0].properties.confirmed, true);
+  assert.equal(aggregate([row("x", "a1", "n1"), row("x", "a1", "n2")]).features[0].properties.confirmed, false);
 });

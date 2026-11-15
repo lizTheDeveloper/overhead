@@ -73,11 +73,13 @@ export function addrKey(ip) {
   return full.slice(0, 4).map((x) => (parseInt(x, 16) || 0).toString(16)).join(":");
 }
 
-/** A wider grouping for "is this an independent source?": the provider network (ASN) plus the IPv4 /24 or
- * IPv6 /48, so hopping between addresses inside one's own block doesn't look like another person. */
+/** A wide grouping for "is this an independent source?": the provider network (ASN) when Cloudflare knows it,
+ * else the IPv4 /24 or IPv6 /48, so hopping between addresses (or between IPv4 and IPv6) on one's own
+ * connection doesn't look like another person. Two people on the same carrier don't confirm each other. */
 export function netKey(ip, asn) {
-  if (!ip.includes(":")) return `${asn ?? ""}|${ip.split(".").slice(0, 3).join(".")}`;
-  return `${asn ?? ""}|${addrKey(ip).split(":").slice(0, 3).join(":")}`;
+  if (asn) return `asn|${asn}`; // one provider is one network, over IPv4 and IPv6 alike
+  if (!ip.includes(":")) return `v4|${ip.split(".").slice(0, 3).join(".")}`;
+  return `v6|${addrKey(ip).split(":").slice(0, 3).join(":")}`;
 }
 
 /** Rows -> one feature per cell: how many reports, from how many different reporters, latest time. */
@@ -86,11 +88,11 @@ export function aggregate(rows) {
   for (const r of rows) {
     let c = by.get(r.cell);
     if (!c) {
-      c = { cell: r.cell, lat: r.lat, lon: r.lon, reports: 0, reporters: new Map(), nets: new Set(), last: 0, seen: 0, heard: 0, listener: 0 };
+      c = { cell: r.cell, lat: r.lat, lon: r.lon, reports: 0, reporters: new Map(), nets: new Set(), people: new Set(), last: 0, seen: 0, heard: 0, listener: 0 };
       by.set(r.cell, c);
     }
     c.reports++;
-    if (r.source === "person") c.nets.add(r.net ?? r.addr ?? r.reporter);
+    if (r.source === "person") { c.nets.add(r.net || r.addr || r.reporter); c.people.add(r.reporter); }
     const a = r.addr ?? r.reporter;
     if (!c.reporters.has(a)) c.reporters.set(a, new Set());
     c.reporters.get(a).add(r.reporter);
@@ -107,7 +109,7 @@ export function aggregate(rows) {
       properties: {
         cell: c.cell, reports: c.reports,
         reporters: [...c.reporters.values()].reduce((n, set) => n + Math.min(set.size, MAX_PEOPLE_PER_ADDR), 0),
-        confirmed: c.nets.size >= 2, // people on at least two different provider networks
+        confirmed: c.nets.size >= 2 && c.people.size >= 2, // two people, on two different provider networks
         last: new Date(c.last * 1000).toISOString(),
         seen: c.seen, heard: c.heard, listener: c.listener,
       },
