@@ -6,20 +6,22 @@ new event (time, confidence) with this listener's location, rounded by the serve
 Only events at or above --min-confidence are sent. Standard library only.
 
     earshot listen --node roof --log events.jsonl &
-    python3 overhead_relay.py events.jsonl --lat 37.77 --lon -122.42 --url https://overhead.example.workers.dev
+    OVERHEAD_KEY=... python3 overhead_relay.py events.jsonl --lat 37.77 --lon -122.42 --url https://overhead.example.workers.dev
 """
 import argparse
 import hashlib
 import json
+import os
 import sys
 import time
 import urllib.error
 import urllib.request
 
 
-def post(url: str, body: dict) -> tuple[int, str]:
+def post(url: str, body: dict, key: str) -> tuple[int, str]:
     req = urllib.request.Request(url.rstrip("/") + "/api/report", data=json.dumps(body).encode(),
-                                 headers={"content-type": "application/json", "user-agent": "overhead-relay/1"})
+                                 headers={"content-type": "application/json", "user-agent": "overhead-relay/1",
+                                          "authorization": f"Bearer {key}"})
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.status, r.read().decode()
@@ -57,9 +59,13 @@ def main(argv=None) -> int:
     ap.add_argument("--url", required=True, help="the overhead site, e.g. https://overhead.example.workers.dev")
     ap.add_argument("--lat", type=float, required=True)
     ap.add_argument("--lon", type=float, required=True)
+    ap.add_argument("--key", default=os.environ.get("OVERHEAD_KEY", ""),
+                    help="listener key from the site's operator (or set OVERHEAD_KEY)")
     ap.add_argument("--min-confidence", type=float, default=0.6)
     ap.add_argument("--from-start", action="store_true", help="also send events already in the log (only those under 10 minutes old are accepted)")
     a = ap.parse_args(argv)
+    if not a.key:
+        ap.error("a listener key is required (--key or OVERHEAD_KEY); ask the site's operator for one")
     device = "listener-" + hashlib.sha256(f"{a.log}|{a.lat}|{a.lon}".encode()).hexdigest()[:16]
     print(f"relaying {a.log} -> {a.url} (confidence ≥ {a.min_confidence})", file=sys.stderr)
     for line in follow(a.log, a.from_start):
@@ -72,7 +78,7 @@ def main(argv=None) -> int:
             continue
         body = {"lat": a.lat, "lon": a.lon, "kind": "heard", "source": "listener", "confidence": round(conf, 3),
                 "time": e.get("end") or e.get("start"), "device": device}
-        code, text = post(a.url, body)
+        code, text = post(a.url, body, a.key)
         print(f"{e.get('start')} conf {conf:.2f} -> {code} {text[:120]}", file=sys.stderr)
     return 0
 

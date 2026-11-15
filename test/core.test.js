@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { aggregate, cellOf, parseReport, windowHours, CELL_DEG } from "../src/core.js";
+import { addrKey, aggregate, cellOf, parseReport, windowHours, CELL_DEG } from "../src/core.js";
 
 const NOW = 1_800_000_000;
 
@@ -63,4 +63,26 @@ test("a device id is optional but must look like a random id", () => {
   assert.equal(parseReport({ lat: 1, lon: 1 }, NOW).value.device, "");
   assert.equal(parseReport({ lat: 1, lon: 1, device: "a1b2c3d4e5f6" }, NOW).value.device, "a1b2c3d4e5f6");
   assert.equal(parseReport({ lat: 1, lon: 1, device: "<script>" }, NOW).ok, false);
+});
+
+test("one network address can't add more than 3 'people' to a dot by making up phone ids", () => {
+  const a = cellOf(37.7, -122.4);
+  const rows = [];
+  for (let i = 0; i < 10; i++) rows.push({ ...a, kind: "seen", source: "person", reporter: `fake${i}`, addr: "one", t: NOW });
+  rows.push({ ...a, kind: "seen", source: "person", reporter: "real", addr: "two", t: NOW });
+  assert.equal(aggregate(rows).features[0].properties.reporters, 4);
+});
+
+test("IPv6 addresses count per /64, IPv4 as is", () => {
+  assert.equal(addrKey("2001:db8:1:2:aaaa::1"), addrKey("2001:db8:1:2:bbbb::9"));
+  assert.notEqual(addrKey("2001:db8:1:2::1"), addrKey("2001:db8:1:3::1"));
+  assert.equal(addrKey("2001:db8::1"), "2001:db8:0:0");
+  assert.equal(addrKey("203.0.113.7"), "203.0.113.7");
+});
+
+test("only listeners may give a time; a person's report is always 'now'", () => {
+  const iso = new Date((NOW - 300) * 1000).toISOString();
+  const r = parseReport({ lat: 1, lon: 1, time: iso }, NOW);
+  assert.equal(r.ok, true);
+  assert.equal(r.value.t, NOW - (NOW % 60));
 });
