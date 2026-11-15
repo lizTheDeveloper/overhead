@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addrKey, aggregate, cellOf, kmBetween, teleported, parseReport, windowHours, CELL_DEG } from "../src/core.js";
+import { addrKey, netKey, aggregate, cellOf, kmBetween, teleported, parseReport, windowHours, CELL_DEG } from "../src/core.js";
 
 const NOW = 1_800_000_000;
 
@@ -116,4 +116,22 @@ test("a dot reported by one person is marked unconfirmed; two networks confirm i
     { ...a, kind: "seen", source: "person", reporter: "y", addr: "n2", t: NOW },
   ]);
   assert.equal(three.features[0].properties.confirmed, true);
+});
+
+test("confirming a dot needs reports from two different provider networks, and people, not listeners", () => {
+  const a = cellOf(37.7, -122.4);
+  const row = (reporter, addr, net, source = "person") => ({ ...a, kind: "seen", source, reporter, addr, net, t: NOW });
+  // one person hopping between /64s inside their own block: same net
+  assert.equal(aggregate([row("x", "a1", "n1"), row("y", "a2", "n1")]).features[0].properties.confirmed, false);
+  // a listener doesn't confirm
+  assert.equal(aggregate([row("x", "a1", "n1"), row("l", "a2", "n2", "listener")]).features[0].properties.confirmed, false);
+  assert.equal(aggregate([row("x", "a1", "n1"), row("y", "a2", "n2")]).features[0].properties.confirmed, true);
+});
+
+test("network groups are wider than addresses: IPv4 /24, IPv6 /48", () => {
+  assert.equal(netKey("203.0.113.7", 7922), netKey("203.0.113.200", 7922));
+  assert.notEqual(netKey("203.0.113.7", 7922), netKey("203.0.114.7", 7922));
+  assert.equal(netKey("2001:db8:1:2::1", 7922), netKey("2001:db8:1:ffff::1", 7922));
+  assert.notEqual(netKey("2001:db8:1::1", 7922), netKey("2001:db8:2::1", 7922));
+  assert.notEqual(netKey("203.0.113.7", 7922), netKey("203.0.113.7", 21928));
 });

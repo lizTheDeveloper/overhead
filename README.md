@@ -25,8 +25,9 @@ Live: https://overhead.lizthedeveloper.workers.dev
   however many phone ids it makes up, but someone with many addresses can still fake a crowd. Only this
   site's own page can submit from a browser, behind a Cloudflare Turnstile bot check. A reporter can't be in two
   places at once: a report impossibly far from their last one (over 300 km/h) replaces their reports from
-  the last hour, which also fixes a misplaced pin. Dots reported from only one network are drawn dashed and
-  marked unconfirmed. Treat a dot as a lead.
+  the last hour, which also fixes a misplaced pin. A dot is "confirmed" only when people on two different
+  provider networks (different ASN, IPv4 /24 or IPv6 /48) report it; until then it's drawn dashed. One person
+  with a phone on both Wi-Fi and mobile data can still confirm their own dot. Treat a dot as a lead.
 - **Listening devices are only as good as earshot,** which hasn't been validated on many real drones yet.
 
 ## Run your own

@@ -84,7 +84,7 @@ async function load() {
         fillColor: p.seen ? "#ffb020" : "#5ab0ff", fillOpacity: Math.max(0.25, 0.9 - 0.65 * age),
       }).bindPopup(`<b>${p.reporters} ${p.reporters === 1 ? "person" : "people"}</b> · ${p.reports} report${p.reports === 1 ? "" : "s"}<br>
         last ${ago(p.last)}<br>seen ${p.seen} · heard ${p.heard}${p.listener ? ` · ${p.listener} from listening devices` : ""}
-        <br><small>${p.confirmed ? "Reported from more than one network." : "<b>Unconfirmed:</b> only one network has reported here so far."} Unverified. Area rounded to ~300 m.</small>`).addTo(layer);
+        <br><small>${p.confirmed ? "Reported by people on more than one provider network." : "<b>Unconfirmed:</b> everyone who reported here so far was on the same network, which could be one person."} Unverified. Area rounded to ~300 m.</small>`).addTo(layer);
     }
   } catch { say("Couldn't load reports; retrying."); }
 }

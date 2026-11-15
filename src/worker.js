@@ -1,5 +1,5 @@
 // overhead: a crowdsourced map of drone sightings. Cloudflare Worker + D1; the map page is static.
-import { addrKey, aggregate, teleported, KEEP_DAYS, MAX_PER_10_MIN, MAX_PER_ADDR_10_MIN, parseReport, windowHours } from "./core.js";
+import { addrKey, netKey, aggregate, teleported, KEEP_DAYS, MAX_PER_10_MIN, MAX_PER_ADDR_10_MIN, parseReport, windowHours } from "./core.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 const OPEN = { "access-control-allow-origin": "*" }; // reading the open data from anywhere is fine; writing isn't
@@ -80,6 +80,7 @@ async function postReport(req, env) {
   const s = await salt(env.DB, day);
   const addr = await sha256(`${s}|${addrKey(ip)}`);
   const reporter = await sha256(`${s}|${ip}|${r.device}`);
+  const net = await sha256(`${s}|${netKey(ip, req.cf?.asn)}`);
   const counts = await env.DB.prepare(
     "SELECT SUM(reporter = ?) AS mine, COUNT(*) AS all_ FROM reports WHERE addr = ? AND received > ?")
     .bind(reporter, addr, now - 600).first();
@@ -94,8 +95,8 @@ async function postReport(req, env) {
     await env.DB.prepare("DELETE FROM reports WHERE reporter = ? AND received > ?").bind(reporter, now - 3600).run();
     moved = true;
   }
-  await env.DB.prepare("INSERT INTO reports (t, received, cell, lat, lon, kind, source, reporter, addr, conf) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(r.t, now, r.cell, r.lat, r.lon, r.kind, r.source, reporter, addr, r.conf).run();
+  await env.DB.prepare("INSERT INTO reports (t, received, cell, lat, lon, kind, source, reporter, addr, net, conf) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(r.t, now, r.cell, r.lat, r.lon, r.kind, r.source, reporter, addr, net, r.conf).run();
   return json({ ok: true, moved, stored: { lat: r.lat, lon: r.lon, time: new Date(r.t * 1000).toISOString(), kind: r.kind } }, 201);
 }
 
@@ -107,7 +108,7 @@ async function getReports(req, env, ctx, url) {
   const hit = await cache.match(key);
   if (hit) return hit;
   const since = Math.floor(Date.now() / 1000) - hours * 3600;
-  const { results } = await env.DB.prepare("SELECT t, cell, lat, lon, kind, source, reporter, addr FROM reports WHERE t > ?").bind(since).all();
+  const { results } = await env.DB.prepare("SELECT t, cell, lat, lon, kind, source, reporter, addr, net FROM reports WHERE t > ?").bind(since).all();
   const fc = aggregate(results);
   fc.hours = hours;
   fc.generated = new Date().toISOString();
