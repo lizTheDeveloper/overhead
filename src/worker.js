@@ -68,14 +68,18 @@ async function postReport(req, env) {
   if (!p.ok) return json({ error: p.error }, 400);
   const r = p.value;
   // listening devices need a key the site's operator gave them; without one, nobody can pose as a device
+  // a listener with an operator-issued key (a headless earshot relay) skips the bot check; anyone else, including
+  // a phone listening in the browser, takes the same bot check as a person
+  let keyed = false;
   if (r.source === "listener") {
     const keys = (env.LISTENER_KEYS || "").split(",").map((k) => k.trim()).filter(Boolean);
     const key = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
-    if (!key || !keys.includes(key)) return json({ error: "listener reports need a key from this site's operator" }, 401);
+    if (key && !keys.includes(key)) return json({ error: "that listener key isn't valid" }, 401);
+    keyed = !!key;
   }
   const day = new Date(now * 1000).toISOString().slice(0, 10);
   const ip = req.headers.get("cf-connecting-ip") || "unknown";
-  if (r.source === "person" && !(await humanCheck(env, body.turnstile, ip)))
+  if (!keyed && !(await humanCheck(env, body.turnstile, ip)))
     return json({ error: "the bot check didn't pass; reload the page and try again" }, 403);
   const s = await salt(env.DB, day);
   const addr = await sha256(`${s}|${addrKey(ip)}`);

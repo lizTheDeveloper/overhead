@@ -22,7 +22,7 @@
              display:flex; gap:10px; background:linear-gradient(transparent, var(--bg) 40%); }
   .actions button { flex:1; font-size:17px; font-weight:600; padding:16px 10px; border-radius:14px; border:0; color:#111; }
   #see { background:var(--accent); } #hear { background:var(--heard); }
-  .actions .info { flex:0 0 52px; background:var(--panel); color:var(--ink); border:1px solid var(--line); }
+  .actions .info { display:flex; align-items:center; justify-content:center; text-decoration:none; font-size:20px; border-radius:14px; flex:0 0 52px; background:var(--panel); color:var(--ink); border:1px solid var(--line); }
   #sheet { position:absolute; z-index:1100; left:0; right:0; bottom:0; background:var(--panel); border-top:1px solid var(--line);
            border-radius:16px 16px 0 0; padding:16px 16px max(16px, env(safe-area-inset-bottom)); display:none; max-height:80vh; overflow:auto; }
   #sheet.open { display:block; }
@@ -48,10 +48,11 @@
   </div>
 </header>
 <div id="toast" role="status"></div>
-<div class="legend"><span class="dot" style="background:var(--accent)"></span>seen <span class="dot" style="background:var(--heard);margin-left:8px"></span>heard only<br>bigger = more people<br>dashed = one network only</div>
+<div class="legend"><span class="dot" style="background:var(--accent)"></span>seen <span class="dot" style="background:var(--heard);margin-left:8px"></span>heard <span class="dot" style="background:#b78cff;margin-left:8px"></span>auto<br>bigger = more people<br>dashed = one network only</div>
 <div class="actions">
   <button id="see">I see a drone</button>
   <button id="hear">I hear a drone</button>
+  <a class="info listen" href="/listen.html" aria-label="Leave your phone listening for drones">🎧</a>
   <button class="info" id="infoBtn" aria-label="About">?</button>
 </div>
 <div id="sheet" role="dialog" aria-modal="true"></div>
@@ -81,9 +82,9 @@ async function load() {
       const age = (Date.now() - Date.parse(p.last)) / 3600000 / hours;   // 0 fresh .. 1 old
       L.circleMarker([lat, lon], {
         radius: 7 + 5 * Math.sqrt(Math.max(0, p.reporters - 1)), weight: p.confirmed ? 1 : 2, color: p.confirmed ? "#000" : "#fff", dashArray: p.confirmed ? null : "3 3",
-        fillColor: p.seen ? "#ffb020" : "#5ab0ff", fillOpacity: Math.max(0.25, 0.9 - 0.65 * age),
+        fillColor: p.seen ? "#ffb020" : p.heard > p.listener ? "#5ab0ff" : "#b78cff", fillOpacity: Math.max(0.25, 0.9 - 0.65 * age),
       }).bindPopup(`<b>${p.reporters} ${p.reporters === 1 ? "person" : "people"}</b> · ${p.reports} report${p.reports === 1 ? "" : "s"}<br>
-        last ${ago(p.last)}<br>seen ${p.seen} · heard ${p.heard}${p.listener ? ` · ${p.listener} from listening devices` : ""}
+        last ${ago(p.last)}<br>seen ${p.seen} · heard ${p.heard}${p.listener ? ` · ${p.listener} heard automatically by phones left listening (can mistake music for a drone)` : ""}
         <br><small>${p.confirmed ? "Reported by people on more than one provider network." : "<b>Unconfirmed:</b> everyone who reported here so far was on the same network, which could be one person."} Unverified. Area rounded to ~300 m.</small>`).addTo(layer);
     }
   } catch { say("Couldn't load reports; retrying."); }
@@ -132,7 +133,7 @@ function report(kind) {
 
 function about() {
   sheet.innerHTML = `<h2>About overhead</h2>
-    <p><b>What this is:</b> anyone can tap when they see or hear a drone. Dots are areas where people reported one; bigger dots mean more different people. Some reports come from listening devices running <a href="https://github.com/lizTheDeveloper/earshot">earshot</a>.</p>
+    <p><b>What this is:</b> anyone can tap when they see or hear a drone. Dots are areas where people reported one; bigger dots mean more different people. Purple dots come from phones <a href="/listen.html">left listening</a> (🎧) with <a href="https://github.com/lizTheDeveloper/earshot">earshot</a>'s detector; they can mistake music for a drone.</p>
     <p><b>Unverified.</b> A dot means people reported something, not that it was a drone, or whose it was: police, hobbyists, delivery, or anyone else. Treat it as a lead, not a fact.</p>
     <p><b>Stay safe and legal.</b> Don't shoot at, jam, laser or chase a drone: it's a federal crime in the US and can hurt people. If someone is in danger, call 911.</p>
     <p><b>Privacy.</b> No accounts. Your spot is rounded to ~300 m before it's saved. A bot check (Cloudflare Turnstile) keeps scripts out. Your IP address isn't stored. A hash of it and of a random number your phone makes, salted with a secret that changes daily and is then deleted, is kept only to count separate people and limit spam. Reports are deleted after 7 days.</p>

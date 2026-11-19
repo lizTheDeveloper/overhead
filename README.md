@@ -6,6 +6,16 @@ report what they hear. Nobody has to say who they are.
 
 Live: https://overhead.lizthedeveloper.workers.dev
 
+## Leave a phone listening
+
+Open **/listen** on any phone, tap **Start listening**, and leave it open (plugged in, by a window or
+outside). It runs [earshot](https://github.com/lizTheDeveloper/earshot)'s drone detector in the page itself
+(`public/detector.js`, a port checked against the Python original on real recordings: same detections on
+30 of 32 clips), and when it hears a likely drone it puts a purple "heard automatically" dot on the map,
+at most once every 5 minutes. **No audio leaves the phone.** It reports a drone that's still overhead,
+not only once it's gone. It can mistake held music notes for a drone (earshot: ~19 false alarms an hour
+in music), so purple dots never confirm a dot on their own. Phones stop listening when the screen locks.
+
 ## What it promises
 
 - **No accounts, no exact locations.** A report is rounded to a grid cell about 300 m across before it's
@@ -54,9 +64,9 @@ python3 relay/overhead_relay.py events.jsonl --lat 37.77 --lon -122.42 --url htt
 ```
 
 earshot itself never uses the network; the relay is a separate script that reads its log and sends
-events at or above `--min-confidence` (default 0.6). Listener reports need a key from the site's operator,
-so nobody can pose as a listening device: `wrangler secret put LISTENER_KEYS` (comma-separated). The live
-site has no keys yet, so it takes people's reports only until earshot is validated on real drones.
+events at or above `--min-confidence` (default 0.6). A headless relay has no browser for the bot check, so
+it needs a key from the site's operator (`wrangler secret put LISTENER_KEYS`, comma-separated). Phones
+listening in the browser take the bot check instead.
 
 ## API
 

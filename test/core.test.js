@@ -147,3 +147,46 @@ test("old rows with an empty network fall back to their address, and confirming 
   assert.equal(aggregate([row("x", "a1", ""), row("y", "a2", "")]).features[0].properties.confirmed, true);
   assert.equal(aggregate([row("x", "a1", "n1"), row("x", "a1", "n2")]).features[0].properties.confirmed, false);
 });
+
+test("the browser resampler turns 48 kHz into 16 kHz and keeps a tone's pitch", async () => {
+  const { resampler } = await import("../public/detector.js");
+  const rs = resampler(48000), f = 330;
+  const parts = [];
+  for (let c = 0; c < 10; c++) parts.push(rs(Float32Array.from({ length: 4800 }, (_, i) => Math.sin(2 * Math.PI * f * (c * 4800 + i) / 48000))));
+  const y = Float32Array.from(parts.flatMap((p) => [...p]));
+  assert.ok(Math.abs(y.length - 16000) < 10, `${y.length}`);
+  let cross = 0; for (let i = 1; i < y.length; i++) if (y[i - 1] < 0 && y[i] >= 0) cross++;
+  assert.ok(Math.abs(cross - f) <= 2, `${cross}`);
+});
+
+test("the browser detector finds a synthetic jittery drone and ignores a steady fan", async () => {
+  const { Detector, SR } = await import("../public/detector.js");
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const n = SR * 14, noise = Float32Array.from({ length: n }, () => (rnd() - 0.5) * 0.02);
+  const make = (jitter) => {
+    const x = Float32Array.from(noise); let ph = 0, f = 180;
+    for (let i = 0; i < n; i++) {
+      if (i % 4000 === 0 && jitter) f = 180 * (1 + 0.04 * (rnd() - 0.5)); // real drones: ~0.4 % pitch change per 0.25 s
+      ph += 2 * Math.PI * f / SR;
+      for (let k = 1; k <= 12; k++) x[i] += 0.01 / k ** 0.6 * Math.sin(k * ph);
+    }
+    return x;
+  };
+  const run = (x) => { const d = new Detector(); return [...d.feed(x), ...d.flush()]; };
+  const drone = run(make(true));
+  assert.equal(drone.length, 1);
+  assert.ok(Math.abs(drone[0].f0 - 180) / 180 < 0.06);
+  assert.equal(run(make(false)).length, 0);
+});
+
+test("a drone that's still overhead is reported while it's still there", async () => {
+  const { Detector, SR } = await import("../public/detector.js");
+  let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const n = SR * 12, x = Float32Array.from({ length: n }, () => (rnd() - 0.5) * 0.02); let ph = 0, f = 180;
+  for (let i = 0; i < n; i++) { if (i % 4000 === 0) f = 180 * (1 + 0.04 * (rnd() - 0.5)); ph += 2 * Math.PI * f / SR; for (let k = 1; k <= 12; k++) x[i] += 0.01 / k ** 0.6 * Math.sin(k * ph); }
+  const d = new Detector();
+  assert.deepEqual(d.feed(x), []); // it hasn't stopped, so nothing has finished
+  const e = d.ongoing();
+  assert.ok(e && e.confidence >= 0.5); // its pitch can come out at a related comb (e.g. 2/3), as in earshot itself
+  assert.equal(new Detector().ongoing(), null);
+});
